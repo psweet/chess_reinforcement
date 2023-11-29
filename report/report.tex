@@ -1,0 +1,29 @@
+\documentclass[12pt]{article}
+\title{Phase 1: Building a Chess Player with Reinforcement Learning}
+\author{Carlos Puerta}
+
+\begin{document}
+
+\maketitle
+
+\section{Environment Setup}
+The intial environment setup was made using both the `python-chess' library, as well as the `gymnasium' library. Gymnasium seemed to be the most commonly used reinforcement learning library, so I created an environement based on their implementation of what methods and features an environment should have.
+
+\subsection{Software Specs}
+I am using Python 3.11.2, with the latest version of both python-chess as well as gymnasium. 
+
+\subsection{Methods}
+As of right now, I have implemented the methods specified in the gymnasium documentation, namely, step, reset, and render. 
+
+The methods perform the actions that you can assume from their name: 
+\begin{enumerate}
+    \item Step advances the game
+    \item Reset restarts the game
+    \item Render shows the game
+\end{enumerate}
+
+Step takes an action to advance the game. Using this set up, I am able to feed any desired action into the step function to advance the simulation. At the moment, these actions are randomly taken from the list of legal actions.
+
+Using this set up, I am able to simulate complete games very quickly.
+
+\end{document}
