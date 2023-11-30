@@ -10,8 +10,8 @@ class Network(nn.Module):
         super(Network, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.conv1 = nn.Conv2d(390, 3, 1)
-        self.conv2 = nn.Conv2d(3, 9, 1)
+        self.conv1 = nn.Conv2d(390, 1, 1)
+        self.conv2 = nn.Conv2d(1, 9, 1)
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.loss = nn.MSELoss()
         
@@ -19,11 +19,12 @@ class Network(nn.Module):
 
     def forward(self, state, available_actions):
         n_actions = len(available_actions)
-        fc1 = nn.Linear(3, n_actions)
+        fc1 = nn.Linear(1, n_actions)
 
         x = F.relu(self.conv1(state))
         x = F.relu(self.conv2(x))
-        return fc1(x)
+        x = fc1(x)
+        return x
     
 class Agent():
     def __init__(
@@ -52,9 +53,9 @@ class Agent():
 
         self.state_memory = np.zeros((self.mem_size, *input_dims), dtype=np.float32)
         self.new_state_memory = np.zeros((self.mem_size, *input_dims), dtype=np.float32)
-        self.action_memory = np.zeros((self.mem_size, *input_dims), dtype=np.int32)
-        self.reward_memory = np.zeros((self.mem_size, *input_dims), dtype=np.float32)
-        self.terminal_memory = np.zeros((self.mem_size, *input_dims), dtype=bool)
+        self.reward_memory = np.zeros((self.mem_size, 1), dtype=np.float32)
+        self.action_memory = np.zeros((self.mem_size, 1), dtype=np.int32)
+        self.terminal_memory = np.zeros((self.mem_size, 1), dtype=bool)
 
     def store_transition(self, state, action, reward, state_, done):
         index = self.mem_cntr % self.mem_size
@@ -91,16 +92,20 @@ class Agent():
         state_batch = torch.tensor(self.state_memory[batch]).to(self.Q_eval.device)
         new_state_batch = torch.tensor(self.new_state_memory[batch]).to(self.Q_eval.device)
         reward_batch = torch.tensor(self.reward_memory[batch]).to(self.Q_eval.device)
-        terminal_batch = torch.tensor(self.terminal_memory[batch]).to(self.Q_eval.device)
+        # terminal_batch = torch.tensor(self.terminal_memory[batch]).to(self.Q_eval.device)
 
         action_batch = self.action_memory[batch]
         q_eval = self.Q_eval.forward(state_batch, action_space)
         print(q_eval.shape, batch_index.shape, action_batch.shape)
-        q_eval = q_eval[batch_index, action_batch]
+        print(action_batch[0], action_batch[0].shape)
+        print(q_eval[batch_index, action_batch])
+        # q_eval = q_eval[batch_index, action_batch]
         q_next = self.Q_eval.forward(new_state_batch, next_action_space)
-        q_next[terminal_batch] = 0
+        # print(terminal_batch.shape)
+        # q_next[terminal_batch] = 0
+        print(torch.max(q_next, dim =1))
 
-        q_target = reward_batch + self.gamma * torch.max(q_next, dim=1)[0]
+        q_target = reward_batch + self.gamma * torch.max(q_next, dim=2)[0]
 
         loss = self.Q_eval.loss(q_target, q_eval).to(self.Q_eval.device)
         loss.backwards()

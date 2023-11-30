@@ -46,7 +46,13 @@ class ChessEnv(Env):
         outputfile.close()
         mem = io.BytesIO()
         cairosvg.svg2png(url=file_name, write_to=mem)
-        return np.array(Image.open(mem))
+        pixels = np.array(Image.open(mem))[:,:,0]
+
+        # import matplotlib.pyplot as plt
+        # plt.imshow(pixels)
+        # plt.show()
+
+        return pixels
     
     def get_reward(self) -> float:
         board = self.game
