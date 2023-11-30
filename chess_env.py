@@ -3,7 +3,9 @@ import random
 import chess
 import numpy as np
 import chess.pgn as pgn
-
+import cairosvg
+import io
+from PIL import Image
 
 from IPython.display import clear_output, display
 
@@ -29,14 +31,24 @@ class ChessEnv(Env):
         }
         return observation, info
  
-    
-    def read_board(self):
-        state = pgn.Game.from_board(self.game)
+    def pgn(self):
+        game = pgn.Game.from_board(self.game)
         exporter = pgn.StringExporter(columns=None, headers=False, variations=True, comments=False)
-        pgn_string = state.accept(exporter)
-        return pgn_string
+        game_string = game.accept(exporter)
+        return game_string
+
+
+    def read_board(self):
+        file_name = "current_game.svg"
+        svg = chess.svg.board(self.game)
+        outputfile = open(file_name, "w")
+        outputfile.write(svg)
+        outputfile.close()
+        mem = io.BytesIO()
+        cairosvg.svg2png(url=file_name, write_to=mem)
+        return np.array(Image.open(mem))
     
-    def get_reward(self):
+    def get_reward(self) -> float:
         board = self.game
 
         white = board.occupied_co[chess.WHITE]
@@ -68,4 +80,4 @@ class ChessEnv(Env):
     
     @property
     def action_space(self):
-        return np.array([move for move in self.game.legal_moves])
+        return [move for move in self.game.legal_moves]
