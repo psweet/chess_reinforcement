@@ -4,7 +4,7 @@ import chess
 import numpy as np
 import chess.pgn as pgn
 import re
-from helpers import letter_2_num, num_2_letter
+# from helpers import letter_2_num, num_2_letter
 
 from IPython.display import clear_output, display
 
@@ -34,26 +34,7 @@ class ChessEnv(Env):
         game = pgn.Game.from_board(self.game)
         exporter = pgn.StringExporter(columns=None, headers=False, variations=True, comments=False)
         game_string = game.accept(exporter)
-        return game_string
-    
-    def move_2_rep(self, move, board):
-        self.game.push_san(move).uci()
-        move = str(board.pop())
-        
-        from_output_layer = np.zeroes((8, 8))
-        from_row = 8 - int(move[1])
-        from_column = letter_2_num[move[0]]
-        from_output_layer[from_row, from_column] = 1
-
-        to_output_layer = np.zeroes((8, 8))
-        to_row = 8 - int(move[3])
-        to_column = letter_2_num[move[2]]
-        to_output_layer[to_row, to_column] = 1
-
-        return np.stack([from_output_layer, to_output_layer], dtype=np.float32)
-
-        
-
+        return game_string     
 
     def read_board(self):
         pieces = ['p', 'r', 'n', 'b', 'q', 'k']

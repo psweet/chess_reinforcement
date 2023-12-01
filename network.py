@@ -2,20 +2,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from helpers import letter_2_num, dist_over_moves
+from helpers import letter_2_num, dist_over_moves, move_2_rep
+from collections import namedtuple, deque
+import random
 
 import numpy as np
 
 # https://www.youtube.com/watch?v=aOwvRvTPQrs
 
-class ChessNetwork(nn.Module):
+class Network(nn.Module):
     def __init__(self, hidden_layers = 4, hidden_size = 200, lr = 0.003):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.hidden_layers = hidden_layers
         self.input_layer = nn.Conv2d(6, hidden_size, 3, stride=1, padding=1)
-        self.module_list = nn.ModuleList([Network(hidden_size) for _ in range(hidden_layers)])
+        self.module_list = nn.ModuleList([SubNet(hidden_size) for _ in range(hidden_layers)])
         self.output_layer = nn.Conv2d(hidden_size, 2, 3, stride=1, padding=1)
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
@@ -32,9 +34,9 @@ class ChessNetwork(nn.Module):
         return x
 
 
-class Network(nn.Module):
+class SubNet(nn.Module):
     def __init__(self, hidden_size):
-        super(Network, self).__init__()
+        super(SubNet, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.conv1 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
@@ -44,9 +46,6 @@ class Network(nn.Module):
         self.activation1 = nn.SELU()
         self.activation2 = nn.SELU()
 
-        self.loss_from = nn.CrossEntropyLoss()
-        self.loss_to = nn.CrossEntropyLoss()
-        
         self.to(self.device)
 
     def forward(self, state):
@@ -59,16 +58,31 @@ class Network(nn.Module):
         x = x + state_input
         x = self.activation2(x)
         return x
-    
+
+Transition = namedtuple('Transition',
+                        ('state', 'action', 'next_state', 'reward'))
+
+class ReplayMemory(object):
+    def __init__(self, capacity):
+        self.memory = deque([], maxlen=capacity)
+
+    def push(self, *args):
+        """Save a transition"""
+        self.memory.append(Transition(*args))
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 class Agent():
     def __init__(
             self,
             gamma,
             epsilon,
             lr,
-            input_dims,
             batch_size,
-            max_me_size = 100_000,
+            mem_size = 100_000,
             eps_end=0.01,
             eps_dec=5e-4
         ):
@@ -77,36 +91,21 @@ class Agent():
         self.eps_min = eps_end
         self.eps_dec = eps_dec
         self.lr = lr
-        self.mem_size = max_me_size
         self.batch_size = batch_size
-        self.mem_cntr = 0
 
-        self.Q_eval = ChessNetwork(
+        self.network = Network(
             lr = self.lr,
         )
 
-        self.state_memory = np.zeros((self.mem_size, *input_dims), dtype=np.float32)
-        self.new_state_memory = np.zeros((self.mem_size, *input_dims), dtype=np.float32)
-        self.reward_memory = np.zeros((self.mem_size, 1), dtype=np.float32)
-        self.action_memory = np.zeros((self.mem_size, 1), dtype=np.int32)
-        self.terminal_memory = np.zeros((self.mem_size, 1), dtype=bool)
+        self.memory = ReplayMemory(mem_size)
 
-    def store_transition(self, state, action, reward, state_, done):
-        index = self.mem_cntr % self.mem_size
-        self.state_memory[index] = state
-        self.new_state_memory[index] = state_
-        self.reward_memory[index] = reward
-        self.action_memory[index] = action
-        self.terminal_memory[index] = done
-
-        self.mem_cntr += 1
+    def store_transition(self, state, action, next_state, reward):
+        self.memory.push(state, action, next_state, reward)
 
     def choose_action(self, observation, action_space):
         if np.random.random() > self.epsilon:
-            state = torch.tensor(observation).to(self.Q_eval.device)
-            actions = self.Q_eval.forward(state)
-            # action = torch.argmax(actions).item()
-            # print("chosen", action, action_space)
+            state = torch.tensor(observation).to(self.network.device)
+            actions = self.network.forward(state)
 
             vals = []
             froms = [str(legal_move)[:2] for legal_move in action_space]
@@ -117,7 +116,12 @@ class Agent():
                 vals.append(val.detach().numpy())
 
             probs = dist_over_moves(vals)
-            chosen_from = str(np.random.choice(froms, size=1, p=probs)[0])[:2]
+
+            try:
+                chosen_from = str(np.random.choice(froms, size=1, p=probs)[0])[:2]
+            except Exception:
+                chosen_from = str(np.random.choice(froms, size=1)[0])[:2]
+
 
             vals = []
             froms = [str(legal_move)[:2] for legal_move in action_space]
@@ -131,47 +135,74 @@ class Agent():
                     vals.append(val.detach().numpy())
                 else:
                     vals.append(0)
-
             action = action_space[np.argmax(vals)]
         else:
             action = np.random.choice(action_space)
 
-        return action
+        to = action.uci()[2:]
+        fr = action.uci()[:2]
+        
+        from_mat = np.zeros((8, 8))
+        from_mat[8 - int(fr[1]), letter_2_num[fr[0]]] = 1
+
+        to_mat = np.zeros((8, 8))
+        to_mat[8 - int(to[1]), letter_2_num[to[0]]] = 1
+
+        return action, move_2_rep(action)
     
     def learn(self):
-        if self.mem_cntr < self.batch_size:
+        if len(self.memory) < self.batch_size:
             return
+        device = self.network.device
+
+        transitions = self.memory.sample(self.batch_size)
+        batch = Transition(*zip(*transitions))
+
+        non_final_mask = torch.tensor(
+            tuple(
+                map(lambda s: s is not None, batch.next_state)
+            ),
+            device=device,
+            dtype=torch.bool
+        )
+        non_final_next_states = [s for s in batch.next_state if s is not None]
+        non_final_next_states = torch.cat(
+            non_final_next_states
+        ).reshape(len(non_final_next_states), 6, 8, 8)
+
+        state_batch = torch.cat(batch.state).reshape(self.batch_size, 6, 8, 8)
+        action_batch = torch.cat(batch.action).reshape(self.batch_size, 2, 8, 8)
+        reward_batch = torch.cat(batch.reward)
+
+        rewards = []
+        for reward in reward_batch:
+            sub_reward = []
+            for _ in range(2):
+                sub_sub_reward = []
+                for _ in range(8):
+                    sub_sub_reward.append(np.full(8, reward))
+                sub_reward.append(sub_sub_reward)
+            rewards.append(sub_reward)
         
-        self.Q_eval.optimizer.zero_grad()
+        reward_batch = torch.tensor(rewards)        
 
-        max_mem = min(self.mem_cntr, self.mem_size)
-        batch = np.random.choice(max_mem, self.batch_size, replace=False)
+        state_action_values = self.network(state_batch).gather(1, action_batch)
+        next_state_values = torch.zeros(self.batch_size, 2, 8, 8, device=device)
+        with torch.no_grad():
+            maxes = self.network(non_final_next_states).max(1)
+            next_state_values[non_final_mask] = torch.cat(
+                [maxes[0], maxes[1]]
+            ).reshape(self.batch_size, 2, 8, 8)
+        
+        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
 
-        batch_index = np.arange(self.batch_size, dtype=np.int32)
-
-        state_batch = torch.tensor(self.state_memory[batch]).to(self.Q_eval.device)
-        new_state_batch = torch.tensor(self.new_state_memory[batch]).to(self.Q_eval.device)
-        reward_batch = torch.tensor(self.reward_memory[batch]).to(self.Q_eval.device)
-        # terminal_batch = torch.tensor(self.terminal_memory[batch]).to(self.Q_eval.device)
-
-        action_batch = self.action_memory[batch]
-        q_eval = self.Q_eval.forward(state_batch)
-        print(q_eval.shape, batch_index.shape, action_batch.shape)
-        print(action_batch[0], action_batch[0].shape)
-        print(q_eval[batch_index, action_batch])
-        # q_eval = q_eval[batch_index, action_batch]
-        q_next = self.Q_eval.forward(new_state_batch)
-        # print(terminal_batch.shape)
-        # q_next[terminal_batch] = 0
-        print(torch.max(q_next, dim =1))
-
-        q_target = reward_batch + self.gamma * torch.max(q_next, dim=2)[0]
-
-        loss = self.Q_eval.loss(q_target, q_eval).to(self.Q_eval.device)
-        loss.backwards()
-        self.Q_eval.optimizer.step()
+        criterion = nn.SmoothL1Loss()
+        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+        self.network.optimizer.zero_grad()
+        loss.backward()
+        # In-place gradient clipping
+        torch.nn.utils.clip_grad_value_(self.network.parameters(), 100)
+        self.network.optimizer.step()
 
         self.epsilon = self.epsilon - self.eps_dec if self.epsilon > self.eps_min else self.eps_min
-
-
 
