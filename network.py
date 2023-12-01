@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from helpers import letter_2_num, dist_over_moves
 
 import numpy as np
 
@@ -14,8 +15,11 @@ class ChessNetwork(nn.Module):
 
         self.hidden_layers = hidden_layers
         self.input_layer = nn.Conv2d(6, hidden_size, 3, stride=1, padding=1)
-        self.module_list = nn.ModuleList([Network(hidden_size, lr) for i in range(hidden_layers)])
+        self.module_list = nn.ModuleList([Network(hidden_size) for _ in range(hidden_layers)])
         self.output_layer = nn.Conv2d(hidden_size, 2, 3, stride=1, padding=1)
+
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+
 
     def forward(self, state):
         x = self.input_layer(state)
@@ -29,18 +33,17 @@ class ChessNetwork(nn.Module):
 
 
 class Network(nn.Module):
-    def __init__(self, hidden_size, lr):
+    def __init__(self, hidden_size):
         super(Network, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.conv1 = nn.Conv2d(hidden_size, hidden_size, 3, 1, 1)
-        self.conv2 = nn.Conv2d(hidden_size, hidden_size, 3, 1, 1)
+        self.conv1 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(hidden_size)
         self.bn2 = nn.BatchNorm2d(hidden_size)
         self.activation1 = nn.SELU()
         self.activation2 = nn.SELU()
 
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.loss_from = nn.CrossEntropyLoss()
         self.loss_to = nn.CrossEntropyLoss()
         
@@ -49,10 +52,10 @@ class Network(nn.Module):
     def forward(self, state):
         state_input = torch.clone(state)
         x = self.conv1(state)
-        x = self.bn1(x)
+        # x = self.bn1(x)
         x = self.activation1(x)
         x = self.conv2(x)
-        x = self.bn2(x)
+        # x = self.bn2(x)
         x = x + state_input
         x = self.activation2(x)
         return x
@@ -100,16 +103,42 @@ class Agent():
 
     def choose_action(self, observation, action_space):
         if np.random.random() > self.epsilon:
-            state = torch.tensor([observation]).to(self.Q_eval.device)
+            state = torch.tensor(observation).to(self.Q_eval.device)
             actions = self.Q_eval.forward(state)
-            action = torch.argmax(actions).item()
-            print("chosen", action, action_space)
+            # action = torch.argmax(actions).item()
+            # print("chosen", action, action_space)
+
+            vals = []
+            froms = [str(legal_move)[:2] for legal_move in action_space]
+            froms = list(set(froms))
+
+            for from_ in froms:
+                val = actions[0,:,:][8 - int(from_[1]), letter_2_num[from_[0]]]
+                vals.append(val.detach().numpy())
+
+            probs = dist_over_moves(vals)
+            chosen_from = str(np.random.choice(froms, size=1, p=probs)[0])[:2]
+
+            vals = []
+            froms = [str(legal_move)[:2] for legal_move in action_space]
+            froms = list(set(froms))
+
+            for legal_move in action_space:
+                from_ = str(legal_move)[:2]
+                if from_ == chosen_from:
+                    to = str(legal_move)[2:]
+                    val = actions[1,:,:][8 - int(to[1]), letter_2_num[to[0]]]
+                    vals.append(val.detach().numpy())
+                else:
+                    vals.append(0)
+
+            action = action_space[np.argmax(vals)]
         else:
             action = np.random.choice(action_space)
 
         return action
     
-    def learn(self, action_space, next_action_space):
+    def learn(self):
         if self.mem_cntr < self.batch_size:
             return
         
@@ -126,12 +155,12 @@ class Agent():
         # terminal_batch = torch.tensor(self.terminal_memory[batch]).to(self.Q_eval.device)
 
         action_batch = self.action_memory[batch]
-        q_eval = self.Q_eval.forward(state_batch, action_space)
+        q_eval = self.Q_eval.forward(state_batch)
         print(q_eval.shape, batch_index.shape, action_batch.shape)
         print(action_batch[0], action_batch[0].shape)
         print(q_eval[batch_index, action_batch])
         # q_eval = q_eval[batch_index, action_batch]
-        q_next = self.Q_eval.forward(new_state_batch, next_action_space)
+        q_next = self.Q_eval.forward(new_state_batch)
         # print(terminal_batch.shape)
         # q_next[terminal_batch] = 0
         print(torch.max(q_next, dim =1))

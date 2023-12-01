@@ -4,6 +4,7 @@ import chess
 import numpy as np
 import chess.pgn as pgn
 import re
+from helpers import letter_2_num, num_2_letter
 
 from IPython.display import clear_output, display
 
@@ -38,28 +39,6 @@ class ChessEnv(Env):
     def move_2_rep(self, move, board):
         self.game.push_san(move).uci()
         move = str(board.pop())
-
-        letter_2_num = {
-            "a":0,
-            "b":1,
-            "c":2,
-            "d":3,
-            "e":4,
-            "f":5,
-            "g":6,
-            "h":7
-        }
-
-        num_2_letter = {
-            0:"a",
-            1:"b",
-            2:"c",
-            3:"d",
-            4:"e",
-            5:"f",
-            6:"g",
-            7:"h"
-        }
         
         from_output_layer = np.zeroes((8, 8))
         from_row = 8 - int(move[1])
