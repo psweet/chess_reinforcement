@@ -41,8 +41,6 @@ class SubNet(nn.Module):
 
         self.conv1 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(hidden_size)
-        self.bn2 = nn.BatchNorm2d(hidden_size)
         self.activation1 = nn.SELU()
         self.activation2 = nn.SELU()
 
@@ -51,10 +49,8 @@ class SubNet(nn.Module):
     def forward(self, state):
         state_input = torch.clone(state)
         x = self.conv1(state)
-        # x = self.bn1(x)
         x = self.activation1(x)
         x = self.conv2(x)
-        # x = self.bn2(x)
         x = x + state_input
         x = self.activation2(x)
         return x
@@ -75,6 +71,7 @@ class ReplayMemory(object):
 
     def __len__(self):
         return len(self.memory)
+
 class Agent():
     def __init__(
             self,
@@ -158,24 +155,20 @@ class Agent():
         transitions = self.memory.sample(self.batch_size)
         batch = Transition(*zip(*transitions))
 
-        non_final_mask = torch.tensor(
-            tuple(
-                map(lambda s: s is not None, batch.next_state)
-            ),
-            device=device,
-            dtype=torch.bool
-        )
         non_final_next_states = [s for s in batch.next_state if s is not None]
+
+        count_states = len(non_final_next_states)
+
         non_final_next_states = torch.cat(
             non_final_next_states
-        ).reshape(len(non_final_next_states), 6, 8, 8)
+        ).reshape(count_states, 6, 8, 8)
 
         state_batch = torch.cat(batch.state).reshape(self.batch_size, 6, 8, 8)
         action_batch = torch.cat(batch.action).reshape(self.batch_size, 2, 8, 8)
         reward_batch = torch.cat(batch.reward)
 
         rewards = []
-        for reward in reward_batch:
+        for reward in reward_batch[: count_states]:
             sub_reward = []
             for _ in range(2):
                 sub_sub_reward = []
@@ -183,6 +176,7 @@ class Agent():
                     sub_sub_reward.append(np.full(8, reward))
                 sub_reward.append(sub_sub_reward)
             rewards.append(sub_reward)
+
         
         reward_batch = torch.tensor(rewards)        
 
@@ -190,9 +184,9 @@ class Agent():
         next_state_values = torch.zeros(self.batch_size, 2, 8, 8, device=device)
         with torch.no_grad():
             maxes = self.network(non_final_next_states).max(1)
-            next_state_values[non_final_mask] = torch.cat(
+            next_state_values = torch.cat(
                 [maxes[0], maxes[1]]
-            ).reshape(self.batch_size, 2, 8, 8)
+            ).reshape(count_states, 2, 8, 8)
         
         expected_state_action_values = (next_state_values * self.gamma) + reward_batch
 
@@ -200,7 +194,7 @@ class Agent():
         loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
         self.network.optimizer.zero_grad()
         loss.backward()
-        # In-place gradient clipping
+
         torch.nn.utils.clip_grad_value_(self.network.parameters(), 100)
         self.network.optimizer.step()
 
