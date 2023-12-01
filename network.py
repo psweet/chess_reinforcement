@@ -5,25 +5,56 @@ import torch.optim as optim
 
 import numpy as np
 
+# https://www.youtube.com/watch?v=aOwvRvTPQrs
+
+class ChessNetwork(nn.Module):
+    def __init__(self, hidden_layers = 4, hidden_size = 200, lr = 0.003):
+        super().__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.hidden_layers = hidden_layers
+        self.input_layer = nn.Conv2d(6, hidden_size, 3, stride=1, padding=1)
+        self.module_list = nn.ModuleList([Network(hidden_size, lr) for i in range(hidden_layers)])
+        self.output_layer = nn.Conv2d(hidden_size, 2, 3, stride=1, padding=1)
+
+    def forward(self, state):
+        x = self.input_layer(state)
+        x = F.relu(x)
+
+        for i in range(self.hidden_layers):
+            x = self.module_list[i](x)
+        
+        x = self.output_layer(x)
+        return x
+
+
 class Network(nn.Module):
-    def __init__(self, lr):
+    def __init__(self, hidden_size, lr):
         super(Network, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.conv1 = nn.Conv2d(390, 1, 1)
-        self.conv2 = nn.Conv2d(1, 9, 1)
+        self.conv1 = nn.Conv2d(hidden_size, hidden_size, 3, 1, 1)
+        self.conv2 = nn.Conv2d(hidden_size, hidden_size, 3, 1, 1)
+        self.bn1 = nn.BatchNorm2d(hidden_size)
+        self.bn2 = nn.BatchNorm2d(hidden_size)
+        self.activation1 = nn.SELU()
+        self.activation2 = nn.SELU()
+
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
-        self.loss = nn.MSELoss()
+        self.loss_from = nn.CrossEntropyLoss()
+        self.loss_to = nn.CrossEntropyLoss()
         
         self.to(self.device)
 
-    def forward(self, state, available_actions):
-        n_actions = len(available_actions)
-        fc1 = nn.Linear(1, n_actions)
-
-        x = F.relu(self.conv1(state))
-        x = F.relu(self.conv2(x))
-        x = fc1(x)
+    def forward(self, state):
+        state_input = torch.clone(state)
+        x = self.conv1(state)
+        x = self.bn1(x)
+        x = self.activation1(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = x + state_input
+        x = self.activation2(x)
         return x
     
 class Agent():
@@ -47,7 +78,7 @@ class Agent():
         self.batch_size = batch_size
         self.mem_cntr = 0
 
-        self.Q_eval = Network(
+        self.Q_eval = ChessNetwork(
             lr = self.lr,
         )
 
@@ -70,7 +101,7 @@ class Agent():
     def choose_action(self, observation, action_space):
         if np.random.random() > self.epsilon:
             state = torch.tensor([observation]).to(self.Q_eval.device)
-            actions = self.Q_eval.forward(state, action_space)
+            actions = self.Q_eval.forward(state)
             action = torch.argmax(actions).item()
             print("chosen", action, action_space)
         else:

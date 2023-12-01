@@ -3,9 +3,7 @@ import random
 import chess
 import numpy as np
 import chess.pgn as pgn
-import cairosvg
-import io
-from PIL import Image
+import re
 
 from IPython.display import clear_output, display
 
@@ -36,23 +34,70 @@ class ChessEnv(Env):
         exporter = pgn.StringExporter(columns=None, headers=False, variations=True, comments=False)
         game_string = game.accept(exporter)
         return game_string
+    
+    def move_2_rep(self, move, board):
+        self.game.push_san(move).uci()
+        move = str(board.pop())
+
+        letter_2_num = {
+            "a":0,
+            "b":1,
+            "c":2,
+            "d":3,
+            "e":4,
+            "f":5,
+            "g":6,
+            "h":7
+        }
+
+        num_2_letter = {
+            0:"a",
+            1:"b",
+            2:"c",
+            3:"d",
+            4:"e",
+            5:"f",
+            6:"g",
+            7:"h"
+        }
+        
+        from_output_layer = np.zeroes((8, 8))
+        from_row = 8 - int(move[1])
+        from_column = letter_2_num[move[0]]
+        from_output_layer[from_row, from_column] = 1
+
+        to_output_layer = np.zeroes((8, 8))
+        to_row = 8 - int(move[3])
+        to_column = letter_2_num[move[2]]
+        to_output_layer[to_row, to_column] = 1
+
+        return np.stack([from_output_layer, to_output_layer], dtype=np.float32)
+
+        
 
 
     def read_board(self):
-        file_name = "current_game.svg"
-        svg = chess.svg.board(self.game)
-        outputfile = open(file_name, "w")
-        outputfile.write(svg)
-        outputfile.close()
-        mem = io.BytesIO()
-        cairosvg.svg2png(url=file_name, write_to=mem)
-        pixels = np.array(Image.open(mem))[:,:,0]
+        pieces = ['p', 'r', 'n', 'b', 'q', 'k']
+        layers = []
 
-        # import matplotlib.pyplot as plt
-        # plt.imshow(pixels)
-        # plt.show()
+        board = str(self.game)
+        for piece in pieces:
+            s = re.sub(f'[^{piece}{piece.upper()} \n]', '.', board)
+            s = re.sub(f'{piece}', '-1', s)
+            s = re.sub(f'{piece.upper()}', '1', s)
+            s = re.sub('\.', '0', s)
 
-        return pixels
+            board_matrix = []
+            for row in s.split("\n"):
+                row = row.split(" ")
+                row = [int(x) for x in row]
+                board_matrix.append(row)
+
+            layers.append(board_matrix)
+
+        board_state = np.stack(layers)
+
+        return board_state
     
     def get_reward(self) -> float:
         board = self.game
