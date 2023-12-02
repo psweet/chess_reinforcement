@@ -4,7 +4,6 @@ import chess
 import numpy as np
 import chess.pgn as pgn
 import re
-# from helpers import letter_2_num, num_2_letter
 
 from IPython.display import clear_output, display
 
