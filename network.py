@@ -13,7 +13,8 @@ import numpy as np
 class Network(nn.Module):
     def __init__(self, hidden_layers = 4, hidden_size = 200, lr = 0.003):
         super().__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = "cpu"
 
         self.hidden_layers = hidden_layers
         self.input_layer = nn.Conv2d(6, hidden_size, 3, stride=1, padding=1)
@@ -37,7 +38,8 @@ class Network(nn.Module):
 class SubNet(nn.Module):
     def __init__(self, hidden_size):
         super(SubNet, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = "cpu"
 
         self.conv1 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
@@ -101,7 +103,7 @@ class Agent():
 
     def choose_action(self, observation, action_space):
         if np.random.random() > self.epsilon:
-            state = torch.tensor(observation).to(self.network.device)
+            state = torch.tensor(observation, dtype=torch.float32).to(self.network.device)
             actions = self.network.forward(state)
 
             vals = []
