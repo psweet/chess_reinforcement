@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from helpers import letter_2_num, dist_over_moves, move_2_rep
+from helpers import letter_2_num, dist_over_moves, move_2_rep, device
 from collections import namedtuple, deque
 import random
 
@@ -13,12 +13,12 @@ import numpy as np
 class Network(nn.Module):
     def __init__(self, hidden_layers = 4, hidden_size = 200, lr = 0.003):
         super().__init__()
-        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.device = "cpu"
 
         self.hidden_layers = hidden_layers
         self.input_layer = nn.Conv2d(6, hidden_size, 3, stride=1, padding=1)
-        self.module_list = nn.ModuleList([SubNet(hidden_size) for _ in range(hidden_layers)])
+        self.module_list = nn.ModuleList(
+            [SubNet(hidden_size).to(device) for _ in range(hidden_layers)]
+        )
         self.output_layer = nn.Conv2d(hidden_size, 2, 3, stride=1, padding=1)
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
@@ -38,15 +38,11 @@ class Network(nn.Module):
 class SubNet(nn.Module):
     def __init__(self, hidden_size):
         super(SubNet, self).__init__()
-        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.device = "cpu"
 
         self.conv1 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(hidden_size, hidden_size, 3, stride=1, padding=1)
         self.activation1 = nn.SELU()
         self.activation2 = nn.SELU()
-
-        self.to(self.device)
 
     def forward(self, state):
         state_input = torch.clone(state)
@@ -94,16 +90,21 @@ class Agent():
 
         self.network = Network(
             lr = self.lr,
-        )
+        ).to(device)
 
         self.memory = ReplayMemory(mem_size)
 
     def store_transition(self, state, action, next_state, reward):
-        self.memory.push(state, action, next_state, reward)
+        self.memory.push(
+            state.to(device),
+            action.to(device),
+            next_state,
+            reward
+        )
 
     def choose_action(self, observation, action_space):
         if np.random.random() > self.epsilon:
-            state = torch.tensor(observation, dtype=torch.float32).to(self.network.device)
+            state = torch.tensor(observation, dtype=torch.float32).to(device)
             actions = self.network.forward(state)
 
             vals = []
@@ -112,9 +113,9 @@ class Agent():
 
             for from_ in froms:
                 val = actions[0,:,:][8 - int(from_[1]), letter_2_num[from_[0]]]
-                vals.append(val.detach().numpy())
+                vals.append(val.cpu())
 
-            probs = dist_over_moves(vals)
+            probs = dist_over_moves(torch.tensor(vals, device=device))
 
             try:
                 chosen_from = str(np.random.choice(froms, size=1, p=probs)[0])[:2]
@@ -131,10 +132,12 @@ class Agent():
                 if from_ == chosen_from:
                     to = str(legal_move)[2:]
                     val = actions[1,:,:][8 - int(to[1]), letter_2_num[to[0]]]
-                    vals.append(val.detach().numpy())
+                    vals.append(val.cpu())
                 else:
                     vals.append(0)
-            action = action_space[np.argmax(vals)]
+
+            vals = torch.tensor(vals, device=device)
+            action = action_space[np.argmax(vals.cpu())]
         else:
             action = np.random.choice(action_space)
 
@@ -152,7 +155,6 @@ class Agent():
     def learn(self):
         if len(self.memory) < self.batch_size:
             return
-        device = self.network.device
 
         transitions = self.memory.sample(self.batch_size)
         batch = Transition(*zip(*transitions))
@@ -175,15 +177,15 @@ class Agent():
             for _ in range(2):
                 sub_sub_reward = []
                 for _ in range(8):
-                    sub_sub_reward.append(np.full(8, reward))
+                    sub_sub_reward.append(np.full(8, reward.cpu()))
                 sub_reward.append(sub_sub_reward)
             rewards.append(sub_reward)
 
         
-        reward_batch = torch.tensor(rewards)        
+        reward_batch = torch.tensor(rewards).to(device)
 
         state_action_values = self.network(state_batch).gather(1, action_batch)
-        next_state_values = torch.zeros(self.batch_size, 2, 8, 8, device=device)
+        next_state_values = torch.zeros(self.batch_size, 2, 8, 8).to(device)
         with torch.no_grad():
             maxes = self.network(non_final_next_states).max(1)
             next_state_values = torch.cat(

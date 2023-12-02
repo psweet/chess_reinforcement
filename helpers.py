@@ -1,4 +1,7 @@
 import numpy as np
+import torch
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 letter_2_num = {
     "a":0,
@@ -23,7 +26,7 @@ num_2_letter = {
 }
 
 def dist_over_moves(vals):
-    probs = np.array(vals)
+    probs = np.array(vals.cpu())
     probs = np.exp(probs)
     probs = probs / probs.sum()
     probs = probs ** 3
