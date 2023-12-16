@@ -1,9 +1,9 @@
 from gymnasium import Env
-import random
 import chess
 import numpy as np
 import chess.pgn as pgn
 import re
+from helpers import get_material_balance
 
 from IPython.display import clear_output, display
 
@@ -13,14 +13,10 @@ class ChessEnv(Env):
 
     def reset(self):
         self.game = chess.Board()
-        self.color = random.choice([chess.WHITE, chess.BLACK])
-        self.modifier = 1
-        if self.color == chess.BLACK:
-            self.modifier = -1
         
         observation = self.read_board()
-        reward = self.get_reward()
-        ended = self.game.is_game_over()
+        reward = 0
+        ended = False
         info = {
             "Move made" : "None",
             "Reward" : reward,
@@ -58,24 +54,58 @@ class ChessEnv(Env):
 
         return board_state
     
-    def get_reward(self) -> float:
-        board = self.game
+    def get_reward(self, player):
+        material = self.get_reward_material()
+        checkmate = self.get_reward_checkmate()
+        captures = self.get_reward_captures()
+        if player.color == chess.BLACK:
+            material *= -1
+            captures *= -1
 
-        white = board.occupied_co[chess.WHITE]
-        black = board.occupied_co[chess.BLACK]
-        return (
-            chess.popcount(white & board.pawns) - chess.popcount(black & board.pawns) +
-            3 * (chess.popcount(white & board.knights) - chess.popcount(black & board.knights)) +
-            3 * (chess.popcount(white & board.bishops) - chess.popcount(black & board.bishops)) +
-            5 * (chess.popcount(white & board.rooks) - chess.popcount(black & board.rooks)) +
-            9 * (chess.popcount(white & board.queens) - chess.popcount(black & board.queens))
-        ) * self.modifier
+        not_finished = 0
+        if (len(self.game.move_stack) > 50) and (not self.game.is_checkmate()):
+            not_finished = -100
+
+        if self.game.can_claim_draw():
+            not_finished = -100
     
-    def step(self, action):
+        return material + captures + checkmate + not_finished
+    
+    def get_reward_material(self) -> float:
+        """Rewards based on material balance"""
+        return get_material_balance(self.game)
+    
+    def get_reward_checkmate(self) -> float:
+        """Rewards based on checkmate only"""        
+        if self.game.is_checkmate:
+            return 100
+        
+        return 0
+    
+    def get_reward_captures(self) -> float:
+        """Rewards based on captures only"""
+        if len(self.game.move_stack) == 0:
+            return 0
+        
+        board = self.game
+        current_material = get_material_balance(board)
+
+        move = board.pop()
+        last_material = get_material_balance(board)
+        
+        board.push(move)
+        return current_material - last_material
+        
+    
+    def step(self, action, player):
         self.game.push(action)
         observation = self.read_board()
-        reward = self.get_reward()
+        reward = self.get_reward(player)
         ended = self.game.is_game_over()
+
+        if len(self.game.move_stack) > 50:
+            ended = True
+
         info = {
             "Move made" : action,
             "Reward" : reward,

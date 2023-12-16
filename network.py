@@ -8,9 +8,6 @@ import random
 
 import numpy as np
 
-# https://www.youtube.com/watch?v=aOwvRvTPQrs
-
-
 class Network(nn.Module):
     def __init__(self, hidden_layers=4, hidden_size=200, lr=0.003):
         super().__init__()
@@ -75,6 +72,7 @@ class ReplayMemory(object):
 class Agent:
     def __init__(
         self,
+        color,
         gamma,
         epsilon,
         lr,
@@ -89,6 +87,7 @@ class Agent:
         self.eps_dec = eps_dec
         self.lr = lr
         self.batch_size = batch_size
+        self.color = color
 
         self.network = Network(
             lr=self.lr,
